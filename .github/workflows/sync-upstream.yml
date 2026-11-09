@@ -1,0 +1,136 @@
+name: Sync upstream
+
+on:
+  schedule:
+    # 09:00 Beijing time (01:00 UTC), daily
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream into upstream-sync and open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/KaringX/clashmi.git
+          git fetch upstream main
+
+          UP_SHA=$(git rev-parse upstream/main)
+          UP_SHORT=$(git rev-parse --short upstream/main)
+          REPO="${{ github.repository }}"
+
+          if git merge-base --is-ancestor "$UP_SHA" HEAD; then
+            echo "## Upstream sync: up to date" >> "$GITHUB_STEP_SUMMARY"
+            echo "KaringX/clashmi main ($UP_SHORT) is already contained in fork main. Nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "## Upstream sync: new commits at $UP_SHORT" >> "$GITHUB_STEP_SUMMARY"
+
+          git checkout -B upstream-sync main
+          git merge --no-ff "$UP_SHA" -m "chore: sync upstream KaringX/clashmi@$UP_SHORT"
+          MERGE_RC=$?
+
+          if [ "$MERGE_RC" -ne 0 ]; then
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            git merge --abort || true
+            echo "### Merge conflicts - manual resolution needed" >> "$GITHUB_STEP_SUMMARY"
+            echo "$CONFLICTS" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::upstream sync hit merge conflicts, see job summary"
+            EXISTING=$(gh issue list --search "upstream sync conflict in:title" --state open --json number --jq '.[0].number // empty')
+            if [ -n "$EXISTING" ]; then
+              echo "Issue #$EXISTING already open for conflicts." >> "$GITHUB_STEP_SUMMARY"
+            else
+              {
+                echo "Daily upstream sync hit merge conflicts. Nothing was pushed."
+                echo ""
+                echo "Upstream: KaringX/clashmi main @ $UP_SHA"
+                echo ""
+                echo "Conflicting files:"
+                echo ""
+                for f in $CONFLICTS; do echo "- $f"; done
+                echo ""
+                echo "Resolve locally:"
+                echo "    git fetch upstream"
+                echo "    git checkout -B upstream-sync main"
+                echo "    git merge upstream/main"
+                echo "    # resolve conflicts, keep the 5 closed-source gap patches, push and open PR"
+                echo ""
+                echo "Compare view: https://github.com/$REPO/compare/main...KaringX:clashmi:main"
+              } > /tmp/sync_issue_body.md
+              gh issue create \
+                --title "upstream sync conflict: KaringX/clashmi@$UP_SHORT" \
+                --body-file /tmp/sync_issue_body.md || true
+            fi
+            exit 0
+          fi
+
+          # Patch guard: the closed-source gap patches must survive the merge
+          GUARD_FAIL=0
+          for f in \
+            third_party/board_service/pubspec.yaml \
+            third_party/libclash_vpn_service/lib/vpn_service.dart \
+            bind/libclash/libclash.go \
+            scripts/build_libclash_core.sh \
+            ios/clashmiWidget/VpnServiceHandler.swift \
+            lib/app/private/app_url_utils_private.dart \
+            .github/workflows/build-trollstore-ipa.yml
+          do
+            if [ ! -e "$f" ]; then
+              echo "::error::patch file missing after merge: $f"
+              GUARD_FAIL=1
+            elif git check-ignore -q "$f"; then
+              echo "::error::patch file re-ignored by upstream .gitignore: $f"
+              GUARD_FAIL=1
+            fi
+          done
+          if [ "$GUARD_FAIL" -ne 0 ]; then
+            echo "### Patch guard FAILED - do not merge this PR as-is" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Patch guard: all patched paths intact and not ignored." >> "$GITHUB_STEP_SUMMARY"
+
+          git push -f origin upstream-sync
+
+          EXISTING=$(gh pr list --head upstream-sync --base main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING already open - branch updated in place." >> "$GITHUB_STEP_SUMMARY"
+            echo "https://github.com/$REPO/pull/$EXISTING" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "Automated daily upstream sync."
+              echo ""
+              echo "- Upstream: KaringX/clashmi main @ $UP_SHORT"
+              echo "- Patch guard passed (vendored deps / Libclash facade / VpnServiceHandler / private stubs / build workflow all intact)"
+              echo ""
+              echo "Please review that the 5 closed-source gap patches still make sense before merging."
+            } > /tmp/sync_pr_body.md
+            if gh pr create --base main --head upstream-sync \
+              --title "chore: sync upstream KaringX/clashmi@$UP_SHORT" \
+              --body-file /tmp/sync_pr_body.md; then
+              echo "PR created." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Could not create PR via API - enable 'Allow GitHub Actions to create and approve pull requests' in repo Settings > Actions > General." >> "$GITHUB_STEP_SUMMARY"
+              echo "Open manually: https://github.com/$REPO/compare/main...upstream-sync" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
