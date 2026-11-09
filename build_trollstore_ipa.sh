@@ -22,6 +22,11 @@ if [ ! -d "bind/apple/Libclash.xcframework" ]; then
   exit 1
 fi
 
+# lib/generated/build_time.dart 由 build_runner 生成且被上游 gitignore，现场生成
+mkdir -p lib/generated
+NOW=$(date +"%Y, %-m, %-d, %-H, %-M, %-S")
+printf '// GENERATED CODE - DO NOT MODIFY BY HAND\n// This file is generated during build process\n\n/// Build timestamp - automatically generated at build time\nfinal DateTime buildDateTime = DateTime(%s);\n' "$NOW" > lib/generated/build_time.dart
+
 echo "==> flutter pub get"
 flutter pub get
 

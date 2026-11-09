@@ -30,6 +30,15 @@ jobs:
       - name: Install ldid
         run: brew install ldid
 
+      # lib/generated/build_time.dart 由 build_runner 生成且被上游 gitignore，
+      # 直接现场生成（内容只是一个构建时间戳常量）
+      - name: Generate build_time.dart
+        run: |
+          mkdir -p lib/generated
+          NOW=$(date +"%Y, %-m, %-d, %-H, %-M, %-S")
+          printf '// GENERATED CODE - DO NOT MODIFY BY HAND\n// This file is generated during build process\n\n/// Build timestamp - automatically generated at build time\nfinal DateTime buildDateTime = DateTime(%s);\n' "$NOW" > lib/generated/build_time.dart
+          cat lib/generated/build_time.dart
+
       - name: Build and fake-sign IPA
         run: bash build_trollstore_ipa.sh
 

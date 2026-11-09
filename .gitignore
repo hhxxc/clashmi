@@ -60,9 +60,7 @@ app.*.map.json
 /bind/android
 /bind/windows
 /bind/linux
-ios/clashmiWidget/VpnServiceHandler.swift
 /.idea/workspace.xml
-/lib/app/private
 /android/app/build
 /dist/ios
 /dist/macos
