@@ -177,13 +177,23 @@ run xcrun simctl install "$UDID" "$APP" || exit 1
 
 # 预写同意标记（LocalStorage 的 storage.json 在 App Group 容器），跳过欢迎页直达主界面，
 # 这样能验证「访问配置文件」路径（profileDir -> getAppGroupDirectory -> native_helper）。
+# 容器要等 app 跑过一次才会创建，所以先短启一次再写。
 log "==> Pre-seeding storage.json in App Group container (skip onboarding)"
-GROUP_DIR="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" groups 2>/dev/null | head -1)"
+xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+sleep 8
+xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+sleep 2
+GROUP_DIR="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" groups 2>/dev/null | grep -i 'group.com.nebula' | head -1)"
+if [ -z "$GROUP_DIR" ]; then
+  # fallback: any line that is an existing directory
+  GROUP_DIR="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" groups 2>/dev/null | while read -r p; do [ -d "$p" ] && echo "$p" && break; done)"
+fi
 if [ -n "$GROUP_DIR" ] && [ -d "$GROUP_DIR" ]; then
   printf '{"userAgreementAgreedKey": "true"}\n' > "$GROUP_DIR/storage.json"
   log "app group container: $GROUP_DIR (storage.json seeded)"
 else
   log "WARN: could not resolve app group container — onboarding screen will show (non-fatal)"
+  xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" groups 2>&1 | head -5 | tee -a "$BUILD_LOG" || true
 fi
 
 log "==> Launching app (detached)"
@@ -202,15 +212,20 @@ xcrun simctl spawn "$UDID" log show --last 2m --style compact 2>/dev/null \
 
 log "==> Checking process is alive"
 RUNNING=0
-if xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -qi "$BUNDLE_ID"; then
+# ps 的默认 COMMAND 列会截断长路径，必须用 args= 全量输出才能匹配到 "Clash Mi"
+PS_OUT="$(xcrun simctl spawn "$UDID" ps -ax -o pid=,args= 2>/dev/null || true)"
+echo "$PS_OUT" | grep -iF "Clash Mi" | head -3 | tee -a "$BUILD_LOG" || true
+if echo "$PS_OUT" | grep -qiF "Clash Mi.app/"; then
   RUNNING=1
-elif xcrun simctl spawn "$UDID" ps -ax 2>/dev/null | grep -qiE "Clash Mi|clashmi"; then
+elif xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -qi "nebula"; then
   RUNNING=1
 fi
 
-# 崩溃标记只对 app 自己的日志行判定——模拟器系统服务（sharingd/replicatord 等）
-# 满嘴 "fatal error" 噪音，与 app 无关。
-APP_CRASH_LINES="$(grep -iE "runner|clashmi|clash mi|flutter|nebula" "$OUT/smoke_launch.log" 2>/dev/null \
+# 崩溃标记只对主 app 进程（Clash Mi / Runner）的日志行判定——
+# 小组件扩展（clashmiWidgetExtension）是独立进程，系统服务（sharingd 等）
+# 满嘴 "fatal error" 噪音，都不该判主 app 的生死。
+APP_CRASH_LINES="$(grep -E "\] (Clash Mi|Runner)\[|Flutter|nebula\.clashmi" "$OUT/smoke_launch.log" 2>/dev/null \
+  | grep -viE "widget|securityd|SecError" \
   | grep -iE "invalidProfile|访问配置文件|Fatal error|Unhandled exception|Cannot find .* in scope|Terminating app|Process crashed|Fatal signal|EXC_BREAKPOINT|EXC_BAD_ACCESS" || true)"
 
 FAIL_MARKERS=""

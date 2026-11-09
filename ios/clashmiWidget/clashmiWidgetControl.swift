@@ -15,7 +15,11 @@ struct clashmiWidgetControl: ControlWidget {
     public static let controlKind: String = "com.nebula.clashmi.clashmiWidget.ControlCenterToggle"
     private static let bundleIdentifier = "com.nebula.clashmi.clashmiService"
     private static let groupIdentifier = "group.com.nebula.clashmi"
-    private static let defaultSharedDirectory: URL! = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupIdentifier)!
+    // containerURL returns nil when the app group is unavailable (e.g. unsigned
+    // builds in the simulator) — never force-unwrap here or the whole extension
+    // crashes during static initialization.
+    private static let defaultSharedDirectory: URL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupIdentifier)
+        ?? FileManager.default.temporaryDirectory
     public static let configFile = defaultSharedDirectory.appendingPathComponent("service.json", isDirectory: false)
     public init(){
         VpnServiceHandler.shared.controlKind = clashmiWidgetControl.controlKind
