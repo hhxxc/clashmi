@@ -17,10 +17,10 @@ if [ ! -d "$ROOT/bind/apple/Libclash.xcframework" ]; then
   exit 1
 fi
 
-echo "==> Building app for iOS Simulator (profile: closest to release; release mode is not supported on simulators)"
+echo "==> Building app for iOS Simulator (debug: the only mode Flutter allows on simulators)"
 flutter pub get
 (cd ios && pod install)
-flutter build ios --simulator --profile
+flutter build ios --simulator --debug
 
 APP="$(ls -d "$ROOT"/build/ios/iphonesimulator/*.app 2>/dev/null | head -1)"
 if [ -z "$APP" ]; then
