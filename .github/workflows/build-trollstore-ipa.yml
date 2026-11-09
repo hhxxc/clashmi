@@ -22,6 +22,18 @@ jobs:
       - name: Build Libclash core SDK
         run: bash scripts/build_libclash_core.sh
 
+      # 补丁引擎单元测试（overwrite 语义 / extension 追加 / http_proxy 提取 /
+      # 双补丁顺序 / 数字归一化等 11 个用例）
+      - name: Run facade unit tests
+        run: |
+          mkdir -p /tmp/patchtest
+          cp bind/libclash/patch.go bind/libclash/patch_test.go /tmp/patchtest/
+          cd /tmp/patchtest
+          go mod init patchtest
+          go mod edit -replace go.yaml.in/yaml/v3="$GITHUB_WORKSPACE/.core-build/kernel/third_party/yaml-v3"
+          go mod tidy
+          go test -v ./...
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -38,6 +50,21 @@ jobs:
           NOW=$(date +"%Y, %-m, %-d, %-H, %-M, %-S")
           printf '// GENERATED CODE - DO NOT MODIFY BY HAND\n// This file is generated during build process\n\n/// Build timestamp - automatically generated at build time\nfinal DateTime buildDateTime = DateTime(%s);\n' "$NOW" > lib/generated/build_time.dart
           cat lib/generated/build_time.dart
+
+      # 模拟器真实启动自测：装 app → 启动 → 截图 + 日志扫描。
+      # 跑不到运行态就不出 IPA——产物发布前的强制闸门。
+      - name: Smoke test on iOS Simulator
+        run: bash scripts/smoke_test_simulator.sh
+
+      - name: Upload smoke test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-evidence
+          path: |
+            .core-build/smoke/smoke_screenshot.png
+            .core-build/smoke/smoke_launch.log
+          if-no-files-found: ignore
 
       - name: Build and fake-sign IPA
         run: bash build_trollstore_ipa.sh

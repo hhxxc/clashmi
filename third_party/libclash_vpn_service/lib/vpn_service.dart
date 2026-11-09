@@ -71,15 +71,37 @@ class VpnServiceConfig {
         'work_dir': work_dir,
         'cache_dir': cache_dir,
         'core_path': core_path,
+        'core_path_patch': core_path_patch,
         'core_path_patch_final': core_path_patch_final,
-        'secret': secret,
+        'core_path_script': core_path_script,
+        'log_level': log_level,
         'log_path': log_path,
         'err_path': err_path,
+        'id': id,
+        'version': version,
+        'name': name,
+        'secret': secret,
+        'install_refer': install_refer,
+        'prepare': prepare,
+        'profile_path': profile_path,
+        'config_file_path': config_file_path,
         'tun_mode': tun_mode,
         'tun_stack': tun_stack,
+        'wake_lock': wake_lock,
+        'auto_connect_at_boot': auto_connect_at_boot,
+        'include_all_networks': include_all_networks,
+        'exclude_local_networks': exclude_local_networks,
+        'exclude_cellular_services': exclude_cellular_services,
+        'exclude_apns': exclude_apns,
+        'exclude_device_communication': exclude_device_communication,
+        'enforce_routes': enforce_routes,
+        'auto_route_use_sub_ranges_by_default':
+            auto_route_use_sub_ranges_by_default,
         'per_app_enable': per_app_enable,
         'per_app_whitelist': per_app_whitelist,
         'per_app_packages': per_app_packages,
+        'notification_content': notification_content,
+        'notification_disconnect': notification_disconnect,
       };
   void fromJson(Map<String, dynamic> json) {
     if (json['control_port'] != null) control_port = json['control_port'];
@@ -89,16 +111,66 @@ class VpnServiceConfig {
     if (json['work_dir'] != null) work_dir = json['work_dir'];
     if (json['cache_dir'] != null) cache_dir = json['cache_dir'];
     if (json['core_path'] != null) core_path = json['core_path'];
-    if (json['core_path_patch_final'] != null) core_path_patch_final = json['core_path_patch_final'];
-    if (json['secret'] != null) secret = json['secret'];
+    if (json['core_path_patch'] != null) {
+      core_path_patch = json['core_path_patch'];
+    }
+    if (json['core_path_patch_final'] != null) {
+      core_path_patch_final = json['core_path_patch_final'];
+    }
+    if (json['core_path_script'] != null) {
+      core_path_script = json['core_path_script'];
+    }
+    if (json['log_level'] != null) log_level = json['log_level'];
     if (json['log_path'] != null) log_path = json['log_path'];
     if (json['err_path'] != null) err_path = json['err_path'];
+    if (json['id'] != null) id = json['id'];
+    if (json['version'] != null) version = json['version'];
+    if (json['name'] != null) name = json['name'];
+    if (json['secret'] != null) secret = json['secret'];
+    if (json['install_refer'] != null) install_refer = json['install_refer'];
+    if (json['prepare'] != null) prepare = json['prepare'];
+    if (json['profile_path'] != null) profile_path = json['profile_path'];
+    if (json['config_file_path'] != null) {
+      config_file_path = json['config_file_path'];
+    }
     if (json['tun_mode'] != null) tun_mode = json['tun_mode'];
     if (json['tun_stack'] != null) tun_stack = json['tun_stack'];
+    if (json['wake_lock'] != null) wake_lock = json['wake_lock'];
+    if (json['auto_connect_at_boot'] != null) {
+      auto_connect_at_boot = json['auto_connect_at_boot'];
+    }
+    if (json['include_all_networks'] != null) {
+      include_all_networks = json['include_all_networks'];
+    }
+    if (json['exclude_local_networks'] != null) {
+      exclude_local_networks = json['exclude_local_networks'];
+    }
+    if (json['exclude_cellular_services'] != null) {
+      exclude_cellular_services = json['exclude_cellular_services'];
+    }
+    if (json['exclude_apns'] != null) exclude_apns = json['exclude_apns'];
+    if (json['exclude_device_communication'] != null) {
+      exclude_device_communication = json['exclude_device_communication'];
+    }
+    if (json['enforce_routes'] != null) {
+      enforce_routes = json['enforce_routes'];
+    }
+    if (json['auto_route_use_sub_ranges_by_default'] != null) {
+      auto_route_use_sub_ranges_by_default =
+          json['auto_route_use_sub_ranges_by_default'];
+    }
     if (json['per_app_enable'] != null) per_app_enable = json['per_app_enable'];
-    if (json['per_app_whitelist'] != null) per_app_whitelist = json['per_app_whitelist'];
+    if (json['per_app_whitelist'] != null) {
+      per_app_whitelist = json['per_app_whitelist'];
+    }
     if (json['per_app_packages'] != null) {
       per_app_packages = (json['per_app_packages'] as List).map((e) => e.toString()).toList();
+    }
+    if (json['notification_content'] != null) {
+      notification_content = json['notification_content'];
+    }
+    if (json['notification_disconnect'] != null) {
+      notification_disconnect = json['notification_disconnect'];
     }
   }
 }

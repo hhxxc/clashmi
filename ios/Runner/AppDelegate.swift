@@ -116,7 +116,17 @@ import NetworkExtension
         if let containerUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupId) {
           result(containerUrl.path)
         } else {
-          result(nil)
+          // Fallback for environments without App Group resolution (e.g. iOS
+          // Simulator ad-hoc signing). The real device (ldid fake-sign with
+          // the app-groups entitlement) always resolves the container.
+          let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+          ).first!
+          let fallback = appSupport.appendingPathComponent(groupId)
+          try? FileManager.default.createDirectory(
+            at: fallback, withIntermediateDirectories: true)
+          NSLog("[native_helper] App Group unavailable, falling back to \(fallback.path)")
+          result(fallback.path)
         }
 
       case "hideDockIcon", "getNativeLibraryPath", "getNativeLibraryDir":

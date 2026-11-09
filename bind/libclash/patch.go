@@ -54,8 +54,14 @@ func loadAndMergeConfig(configFile, patchFile, patchFinalFile string) (string, *
 			return "", nil, fmt.Errorf("parse patch %s: %w", p, err)
 		}
 		filterControlKeys(patch)
-		mergeExtension(base, patch, hp)
+		// Pull the extension block out before deepMerge (it is append-only
+		// semantics), merge plain keys first, then append the extension extras
+		// on top so they survive even when the patch also carries top-level
+		// rules/proxy-groups replacements.
+		ext, _ := patch["extension"].(map[string]any)
+		delete(patch, "extension")
 		deepMerge(base, patch)
+		mergeExtension(base, ext, hp)
 	}
 
 	if hp.Port == 0 {
@@ -141,14 +147,13 @@ func filterControlKeys(m map[string]any) {
 	}
 }
 
-// mergeExtension pulls the clashmi `extension` block out of the patch and
-// applies its append semantics on top of the base config.
-func mergeExtension(base, patch map[string]any, hp *httpProxyInfo) {
-	ext, ok := patch["extension"].(map[string]any)
-	if !ok {
+// mergeExtension applies the clashmi `extension` block's append semantics on
+// top of the base config (call AFTER deepMerge so appends are not clobbered by
+// top-level replacements).
+func mergeExtension(base map[string]any, ext map[string]any, hp *httpProxyInfo) {
+	if ext == nil {
 		return
 	}
-	delete(patch, "extension")
 
 	appendList(base, "rules", ext["rules"])
 	appendList(base, "rules", ext["append-rules"])
@@ -171,11 +176,27 @@ func mergeExtension(base, patch map[string]any, hp *httpProxyInfo) {
 }
 
 func appendList(base map[string]any, key string, extra any) {
-	items := toStringSlice(extra)
+	items := toAnySlice(extra)
 	if len(items) == 0 {
 		return
 	}
-	base[key] = append(toStringSlice(base[key]), items...)
+	base[key] = append(toAnySlice(base[key]), items...)
+}
+
+// toAnySlice normalizes []any / []string / nil into a []any so lists of plain
+// strings (rules) and lists of maps (proxy-groups) can both be appended.
+func toAnySlice(v any) []any {
+	switch t := v.(type) {
+	case []any:
+		return t
+	case []string:
+		out := make([]any, len(t))
+		for i, s := range t {
+			out[i] = s
+		}
+		return out
+	}
+	return nil
 }
 
 func mergeMapInto(base map[string]any, key string, extra any) {
