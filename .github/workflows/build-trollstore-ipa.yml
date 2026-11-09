@@ -51,6 +51,14 @@ jobs:
           printf '// GENERATED CODE - DO NOT MODIFY BY HAND\n// This file is generated during build process\n\n/// Build timestamp - automatically generated at build time\nfinal DateTime buildDateTime = DateTime(%s);\n' "$NOW" > lib/generated/build_time.dart
           cat lib/generated/build_time.dart
 
+      # Dart 侧协议契约测试：VpnServiceConfig toJson/fromJson 全字段往返，
+      # 锁死"toJson 漏字段导致设备端静默失效"这类 bug（Windows 本地装 Flutter 后同样可跑）
+      - name: Run Dart protocol unit tests
+        run: |
+          cd third_party/libclash_vpn_service
+          flutter pub get
+          flutter test -r expanded
+
       # 模拟器真实启动自测：装 app → 启动 → 截图 + 日志扫描。
       # 跑不到运行态就不出 IPA——产物发布前的强制闸门。
       - name: Smoke test on iOS Simulator
