@@ -123,12 +123,14 @@ dependency_overrides:
       url: https://github.com/KaringX/move_to_background.git
       ref: 9720fa00946af134caf04b05702230d4329f857f
   libclash_vpn_service:
-    path: ../libclash-vpn-service/
+    path: third_party/libclash_vpn_service
+    #path: ../libclash-vpn-service/
     #git:
       #url: https://github.com/KaringX/libclash-vpn-service.git
       #ref: master
   board_service:
-    path: ../board-service/
+    path: third_party/board_service
+    #path: ../board-service/
     #git:
       #url: https://github.com/KaringX/board-service.git
       #ref: master
