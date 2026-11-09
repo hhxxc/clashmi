@@ -35,6 +35,29 @@ log "==> flutter pub get + pod install"
 run flutter pub get || exit 1
 run bash -c "cd ios && pod install" || exit 1
 
+# Xcode 15+ 起模拟器运行时是可下载组件；镜像没预装时 xcodebuild 会以
+# "Unable to find a destination matching ... platform:iOS Simulator" 拒绝构建。
+log "==> Ensuring iOS Simulator runtime"
+xcrun simctl list runtimes 2>&1 | tee -a "$BUILD_LOG" || true
+NEED_RUNTIME="$(xcrun simctl list runtimes --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("yes"); raise SystemExit
+ok = any(
+    ("iOS" in r.get("name", "") or "iOS" in r.get("identifier", ""))
+    and r.get("isAvailable", True)
+    for r in d.get("runtimes", [])
+)
+print("no" if ok else "yes")
+')"
+if [ "$NEED_RUNTIME" = "yes" ]; then
+  log "==> Downloading iOS Simulator platform (this can take several minutes)"
+  run xcodebuild -downloadPlatform iOS || log "WARN: -downloadPlatform iOS returned non-zero"
+  xcrun simctl list runtimes 2>&1 | tee -a "$BUILD_LOG" || true
+fi
+
 # 诊断用：把 -showBuildSettings 的完整输出留档（flutter 失败时这正是被吞掉的部分）
 log "==> Diagnostic: xcodebuild -showBuildSettings (iphonesimulator)"
 run xcodebuild -showBuildSettings \
@@ -76,7 +99,28 @@ for runtime, devs in d["devices"].items():
             sys.exit(0)
 ')"
 if [ -z "$UDID" ]; then
-  log "FAIL: no available iPhone simulator"
+  log "==> No iPhone simulator exists yet — creating one"
+  RT="$(xcrun simctl list runtimes --json | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for r in d.get("runtimes", []):
+    if ("iOS" in r.get("name", "") or "iOS" in r.get("identifier", "")) and r.get("isAvailable", True):
+        print(r["udid"]); break
+')"
+  DT="$(xcrun simctl list devicetypes --json | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for t in d.get("devicetypes", []):
+    if "iPhone" in t.get("name", ""):
+        print(t["identifier"]); break
+')"
+  if [ -n "$RT" ] && [ -n "$DT" ]; then
+    UDID="$(xcrun simctl create "CI iPhone" "$DT" "$RT")" || true
+    log "created: $UDID ($DT @ $RT)"
+  fi
+fi
+if [ -z "$UDID" ]; then
+  log "FAIL: no available iPhone simulator and could not create one"
   exit 1
 fi
 log "simulator: $UDID"
