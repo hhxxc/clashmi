@@ -17,10 +17,10 @@ if [ ! -d "$ROOT/bind/apple/Libclash.xcframework" ]; then
   exit 1
 fi
 
-echo "==> Building app for iOS Simulator (release, matches shipped AOT)"
+echo "==> Building app for iOS Simulator (profile: closest to release; release mode is not supported on simulators)"
 flutter pub get
 (cd ios && pod install)
-flutter build ios --simulator --release
+flutter build ios --simulator --profile
 
 APP="$(ls -d "$ROOT"/build/ios/iphonesimulator/*.app 2>/dev/null | head -1)"
 if [ -z "$APP" ]; then
@@ -52,23 +52,26 @@ xcrun simctl bootstatus "$UDID" -b
 echo "==> Installing app"
 xcrun simctl install "$UDID" "$APP"
 
-echo "==> Launching app (console captured)"
-xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" > "$OUT/smoke_launch.log" 2>&1 &
-LAUNCH_PID=$!
+echo "==> Launching app (detached)"
+xcrun simctl launch "$UDID" "$BUNDLE_ID" || true
 echo "waiting 25s for Flutter boot + home screen render..."
 sleep 25
 
 echo "==> Screenshot"
 xcrun simctl io "$UDID" screenshot "$OUT/smoke_screenshot.png" || true
 
+echo "==> Collecting unified log"
+xcrun simctl spawn "$UDID" log show --last 2m --style compact 2>/dev/null \
+  | grep -iE "runner|clash|flutter|fatal|error|exception|invalidProfile|访问配置" \
+  > "$OUT/smoke_launch.log" || true
+
 echo "==> Checking process is alive"
 RUNNING=0
 if xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -qi "$BUNDLE_ID"; then
   RUNNING=1
+elif xcrun simctl spawn "$UDID" ps -ax 2>/dev/null | grep -qiE "Clash Mi|clashmi"; then
+  RUNNING=1
 fi
-
-kill "$LAUNCH_PID" 2>/dev/null || true
-wait "$LAUNCH_PID" 2>/dev/null || true
 
 echo "==> Log scan"
 FAIL_MARKERS=""
