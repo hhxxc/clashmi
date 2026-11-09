@@ -1,35 +1,69 @@
 #!/usr/bin/env bash
-# iOS Simulator smoke test: build the app for the simulator, install it into a
-# freshly booted simulator, launch it and verify it reaches a running state
-# (home screen) without crashing. Artifacts: smoke_screenshot.png + smoke_launch.log.
+# iOS Simulator smoke test（发布闸门）：为模拟器构建 app → 装进全新启动的
+# 模拟器 → 真实启动 → 截图 + 日志扫描 + 进程存活检查。
+# 本脚本不通过就不许打 IPA。
 #
-# The IPA build step must NOT run unless this passes — that is the whole point.
+# 与旧版的区别：
+#   1. 构建改走直接 xcodebuild（flutter build ios --simulator 在 CI 上会以
+#      "No Xcode build settings have been found" 失败且吞掉真实错误）；
+#      flutter 命令仅作兜底，且带 --verbose。
+#   2. 全部输出落 .core-build/smoke/smoke_build.log，失败时证据包也有内容。
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/.core-build/smoke"
 mkdir -p "$OUT"
+BUILD_LOG="$OUT/smoke_build.log"
+: > "$BUILD_LOG"
+
+log() { echo "$*" | tee -a "$BUILD_LOG"; }
+run() { log "==== $* ===="; "$@" 2>&1 | tee -a "$BUILD_LOG"; return "${PIPESTATUS[0]}"; }
 
 BUNDLE_ID="com.nebula.clashmi"
+SIM_BUILD_DIR="$ROOT/build/ios/iphonesimulator"
 
 if [ ! -d "$ROOT/bind/apple/Libclash.xcframework" ]; then
-  echo "FAIL: bind/apple/Libclash.xcframework missing (run scripts/build_libclash_core.sh first)"
+  log "FAIL: bind/apple/Libclash.xcframework missing (run scripts/build_libclash_core.sh first)"
   exit 1
 fi
 
-echo "==> Building app for iOS Simulator (debug: the only mode Flutter allows on simulators)"
-flutter pub get
-(cd ios && pod install)
-flutter build ios --simulator --debug
+log "==> Toolchain"
+run xcodebuild -version || true
+run flutter --version || true
 
-APP="$(ls -d "$ROOT"/build/ios/iphonesimulator/*.app 2>/dev/null | head -1)"
+log "==> flutter pub get + pod install"
+run flutter pub get || exit 1
+run bash -c "cd ios && pod install" || exit 1
+
+# 诊断用：把 -showBuildSettings 的完整输出留档（flutter 失败时这正是被吞掉的部分）
+log "==> Diagnostic: xcodebuild -showBuildSettings (iphonesimulator)"
+run xcodebuild -showBuildSettings \
+  -workspace ios/Runner.xcworkspace -scheme Runner \
+  -configuration Debug -sdk iphonesimulator || true
+
+log "==> Building app for iOS Simulator via xcodebuild (debug)"
+rm -rf "$SIM_BUILD_DIR"
+run xcodebuild build \
+  -workspace ios/Runner.xcworkspace -scheme Runner \
+  -configuration Debug -sdk iphonesimulator \
+  -destination 'generic/platform=iOS Simulator' \
+  CONFIGURATION_BUILD_DIR="$SIM_BUILD_DIR" \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+  || log "WARN: xcodebuild build exited non-zero"
+
+APP="$(ls -d "$SIM_BUILD_DIR"/*.app 2>/dev/null | head -1)"
 if [ -z "$APP" ]; then
-  echo "FAIL: no .app produced in build/ios/iphonesimulator"
+  log "==> Primary build produced no .app — falling back to flutter build --verbose"
+  run flutter build ios --simulator --debug --verbose || true
+  APP="$(ls -d "$ROOT"/build/ios/iphonesimulator/*.app 2>/dev/null | head -1)"
+fi
+if [ -z "$APP" ]; then
+  log "FAIL: no .app produced in build/ios/iphonesimulator (see smoke_build.log for the real xcodebuild error)"
   exit 1
 fi
-echo "app bundle: $APP"
+log "app bundle: $APP"
 
-echo "==> Picking an available iPhone simulator"
+log "==> Picking an available iPhone simulator"
 UDID="$(xcrun simctl list devices available --json | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
@@ -42,30 +76,30 @@ for runtime, devs in d["devices"].items():
             sys.exit(0)
 ')"
 if [ -z "$UDID" ]; then
-  echo "FAIL: no available iPhone simulator"
+  log "FAIL: no available iPhone simulator"
   exit 1
 fi
-echo "simulator: $UDID"
-xcrun simctl boot "$UDID" 2>/dev/null || true
-xcrun simctl bootstatus "$UDID" -b
+log "simulator: $UDID"
+xcrun simctl boot "$UDID" 2>>"$BUILD_LOG" || true
+run xcrun simctl bootstatus "$UDID" -b || true
 
-echo "==> Installing app"
-xcrun simctl install "$UDID" "$APP"
+log "==> Installing app"
+run xcrun simctl install "$UDID" "$APP" || exit 1
 
-echo "==> Launching app (detached)"
-xcrun simctl launch "$UDID" "$BUNDLE_ID" || true
-echo "waiting 25s for Flutter boot + home screen render..."
+log "==> Launching app (detached)"
+xcrun simctl launch "$UDID" "$BUNDLE_ID" 2>&1 | tee -a "$BUILD_LOG" || true
+log "waiting 25s for Flutter boot + home screen render..."
 sleep 25
 
-echo "==> Screenshot"
-xcrun simctl io "$UDID" screenshot "$OUT/smoke_screenshot.png" || true
+log "==> Screenshot"
+xcrun simctl io "$UDID" screenshot "$OUT/smoke_screenshot.png" 2>&1 | tee -a "$BUILD_LOG" || true
 
-echo "==> Collecting unified log"
+log "==> Collecting unified log"
 xcrun simctl spawn "$UDID" log show --last 2m --style compact 2>/dev/null \
   | grep -iE "runner|clash|flutter|fatal|error|exception|invalidProfile|访问配置" \
-  > "$OUT/smoke_launch.log" || true
+  | tee "$OUT/smoke_launch.log" | tail -40 | tee -a "$BUILD_LOG" || true
 
-echo "==> Checking process is alive"
+log "==> Checking process is alive"
 RUNNING=0
 if xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -qi "$BUNDLE_ID"; then
   RUNNING=1
@@ -73,12 +107,11 @@ elif xcrun simctl spawn "$UDID" ps -ax 2>/dev/null | grep -qiE "Clash Mi|clashmi
   RUNNING=1
 fi
 
-echo "==> Log scan"
 FAIL_MARKERS=""
-if grep -qiE "invalidProfile|访问配置文件|Fatal error|Unhandled exception|Cannot find .* in scope" "$OUT/smoke_launch.log"; then
+if grep -qiE "invalidProfile|访问配置文件|Fatal error|Unhandled exception|Cannot find .* in scope" "$OUT/smoke_launch.log" 2>/dev/null; then
   FAIL_MARKERS="error markers in launch log"
 fi
-if grep -qiE "Terminating app due to uncaught exception|Process crashed" "$OUT/smoke_launch.log"; then
+if grep -qiE "Terminating app due to uncaught exception|Process crashed" "$OUT/smoke_launch.log" 2>/dev/null; then
   FAIL_MARKERS="${FAIL_MARKERS:+$FAIL_MARKERS; }crash markers in launch log"
 fi
 
@@ -87,19 +120,16 @@ if [ "$SHOT_SIZE" -lt 10000 ]; then
   FAIL_MARKERS="${FAIL_MARKERS:+$FAIL_MARKERS; }screenshot suspiciously small ($SHOT_SIZE bytes)"
 fi
 
-echo "---- smoke_launch.log (tail) ----"
-tail -30 "$OUT/smoke_launch.log" || true
-echo "---------------------------------"
-echo "process alive at check time: $RUNNING"
-echo "screenshot: $OUT/smoke_screenshot.png ($SHOT_SIZE bytes)"
+log "process alive at check time: $RUNNING"
+log "screenshot: $OUT/smoke_screenshot.png ($SHOT_SIZE bytes)"
 
 if [ -n "$FAIL_MARKERS" ]; then
-  echo "FAIL: $FAIL_MARKERS"
+  log "FAIL: $FAIL_MARKERS"
   exit 1
 fi
 if [ "$RUNNING" -ne 1 ]; then
-  echo "FAIL: app process is not running after launch (crashed on startup?)"
+  log "FAIL: app process is not running after launch (crashed on startup?)"
   exit 1
 fi
 
-echo "SMOKE TEST PASS: app booted to a running state"
+log "SMOKE TEST PASS: app booted to a running state"

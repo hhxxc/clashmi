@@ -64,7 +64,8 @@ jobs:
           path: |
             .core-build/smoke/smoke_screenshot.png
             .core-build/smoke/smoke_launch.log
-          if-no-files-found: ignore
+            .core-build/smoke/smoke_build.log
+          if-no-files-found: warn
 
       - name: Build and fake-sign IPA
         run: bash build_trollstore_ipa.sh
