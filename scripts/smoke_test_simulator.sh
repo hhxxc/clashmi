@@ -175,25 +175,19 @@ run xcrun simctl bootstatus "$UDID" -b || true
 log "==> Installing app"
 run xcrun simctl install "$UDID" "$APP" || exit 1
 
-# 预写同意标记（LocalStorage 的 storage.json 在 App Group 容器），跳过欢迎页直达主界面，
+# 预写同意标记（LocalStorage 的 storage.json），跳过欢迎页直达主界面，
 # 这样能验证「访问配置文件」路径（profileDir -> getAppGroupDirectory -> native_helper）。
-# 容器要等 app 跑过一次才会创建，所以先短启一次再写。
-log "==> Pre-seeding storage.json in App Group container (skip onboarding)"
-xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
-sleep 8
-xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
-sleep 2
-GROUP_DIR="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" groups 2>/dev/null | grep -i 'group.com.nebula' | head -1)"
-if [ -z "$GROUP_DIR" ]; then
-  # fallback: any line that is an existing directory
-  GROUP_DIR="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" groups 2>/dev/null | while read -r p; do [ -d "$p" ] && echo "$p" && break; done)"
-fi
-if [ -n "$GROUP_DIR" ] && [ -d "$GROUP_DIR" ]; then
-  printf '{"userAgreementAgreedKey": "true"}\n' > "$GROUP_DIR/storage.json"
-  log "app group container: $GROUP_DIR (storage.json seeded)"
+# 模拟器无签名解析不了 App Group，AppDelegate 兜底到
+# Application Support/group.com.nebula.clashmi/（data 容器内）——写这里。
+log "==> Pre-seeding storage.json (skip onboarding)"
+DATA_DIR="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data 2>/dev/null | head -1)"
+SEED_DIR="$DATA_DIR/Library/Application Support/group.com.nebula.clashmi"
+if [ -n "$DATA_DIR" ] && [ -d "$DATA_DIR" ]; then
+  mkdir -p "$SEED_DIR"
+  printf '{"userAgreementAgreedKey": "true"}\n' > "$SEED_DIR/storage.json"
+  log "seeded: $SEED_DIR/storage.json"
 else
-  log "WARN: could not resolve app group container — onboarding screen will show (non-fatal)"
-  xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" groups 2>&1 | head -5 | tee -a "$BUILD_LOG" || true
+  log "WARN: could not resolve app data container — onboarding screen will show (non-fatal)"
 fi
 
 log "==> Launching app (detached)"
@@ -206,7 +200,7 @@ xcrun simctl io "$UDID" screenshot "$OUT/smoke_screenshot.png" 2>&1 | tee -a "$B
 
 log "==> Collecting unified log"
 xcrun simctl spawn "$UDID" log show --last 2m --style compact 2>/dev/null \
-  | grep -iE "runner|clash|flutter|fatal|error|exception|invalidProfile|访问配置" \
+  | grep -iE "runner|clash|flutter|fatal|error|exception|invalidProfile|访问配置|native_helper" \
   | grep -viE "sharingd|replicatord|rapportd|apsd|SpringBoard|runningboardd|cloudd|passd|sleepd|chronod|assistantd|businessservicesd|UserNotifications|IDS:Registration|gamecenter|memorystatus" \
   | tee "$OUT/smoke_launch.log" | tail -40 | tee -a "$BUILD_LOG" || true
 
