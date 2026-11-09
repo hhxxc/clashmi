@@ -105,34 +105,63 @@ log "simulator: $UDID"
 
 log "==> Building app for iOS Simulator via xcodebuild (debug)"
 rm -rf "$SIM_BUILD_DIR"
-# SUPPORTED_PLATFORMS 命令行覆盖：项目级配置曾把平台锁死为 iphoneos（已修 pbxproj，
-# 这里再兜一层）。destination 用具体设备 id，绕开 generic 匹配的坑。
+# ARCHS=arm64：destination 会同时匹配 Rosetta 的 x86_64 变体，而 Flutter.framework
+# 拷贝产物只有 arm64 切片，x86_64 链接必挂。宿主/模拟器都是 arm64，锁死即可。
 run xcodebuild build \
   -workspace ios/Runner.xcworkspace -scheme Runner \
   -configuration Debug -sdk iphonesimulator \
   -destination "id=$UDID" \
   CONFIGURATION_BUILD_DIR="$SIM_BUILD_DIR" \
   SUPPORTED_PLATFORMS="iphoneos iphonesimulator" \
+  ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
   || log "WARN: xcodebuild build exited non-zero"
 
-APP="$(ls -d "$SIM_BUILD_DIR"/*.app 2>/dev/null | head -1)"
+# .app 必须含有效 Info.plist（上一轮 BUILD FAILED 的半成品 .app 缺 bundle id，
+# 会被 simctl install 以 "Missing bundle ID" 拒收）
+app_valid() {
+  python3 -c "
+import plistlib, sys
+try:
+    d = plistlib.load(open(sys.argv[1] + '/Info.plist', 'rb'))
+    ok = bool(d.get('CFBundleIdentifier'))
+except Exception:
+    ok = False
+sys.exit(0 if ok else 1)
+" "$1" 2>/dev/null
+}
+
+APP=""
+for cand in "$SIM_BUILD_DIR"/*.app; do
+  [ -d "$cand" ] || continue
+  if app_valid "$cand"; then APP="$cand"; break; fi
+  log "ignoring incomplete app bundle: $cand"
+done
 if [ -z "$APP" ]; then
-  log "==> Primary build produced no .app — retrying with generic destination"
+  log "==> Primary build produced no valid .app — retrying with generic destination"
   run xcodebuild build \
     -workspace ios/Runner.xcworkspace -scheme Runner \
     -configuration Debug -sdk iphonesimulator \
     -destination 'generic/platform=iOS Simulator' \
     CONFIGURATION_BUILD_DIR="$SIM_BUILD_DIR" \
     SUPPORTED_PLATFORMS="iphoneos iphonesimulator" \
+    ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
     || log "WARN: generic retry exited non-zero"
-  APP="$(ls -d "$SIM_BUILD_DIR"/*.app 2>/dev/null | head -1)"
+  for cand in "$SIM_BUILD_DIR"/*.app; do
+    [ -d "$cand" ] || continue
+    if app_valid "$cand"; then APP="$cand"; break; fi
+    log "ignoring incomplete app bundle: $cand"
+  done
 fi
 if [ -z "$APP" ]; then
-  log "==> Still no .app — falling back to flutter build --verbose"
+  log "==> Still no valid .app — falling back to flutter build --verbose"
   run flutter build ios --simulator --debug --verbose || true
-  APP="$(ls -d "$ROOT"/build/ios/iphonesimulator/*.app 2>/dev/null | head -1)"
+  for cand in "$ROOT"/build/ios/iphonesimulator/*.app; do
+    [ -d "$cand" ] || continue
+    if app_valid "$cand"; then APP="$cand"; break; fi
+    log "ignoring incomplete app bundle: $cand"
+  done
 fi
 if [ -z "$APP" ]; then
   log "FAIL: no .app produced in build/ios/iphonesimulator (see smoke_build.log for the real xcodebuild error)"
