@@ -1,4 +1,4 @@
-name: Sync upstream
+name: Sync upstream & package
 
 on:
   schedule:
@@ -14,6 +14,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  actions: write
 
 jobs:
   sync:
@@ -24,7 +25,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Merge upstream into upstream-sync and open PR
+      - name: Pull upstream into main and package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -105,32 +106,28 @@ jobs:
             fi
           done
           if [ "$GUARD_FAIL" -ne 0 ]; then
-            echo "### Patch guard FAILED - do not merge this PR as-is" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Patch guard FAILED - merge into main blocked, patches must be restored first" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           echo "Patch guard: all patched paths intact and not ignored." >> "$GITHUB_STEP_SUMMARY"
 
-          git push -f origin upstream-sync
-
-          EXISTING=$(gh pr list --head upstream-sync --base main --state open --json number --jq '.[0].number // empty')
-          if [ -n "$EXISTING" ]; then
-            echo "PR #$EXISTING already open - branch updated in place." >> "$GITHUB_STEP_SUMMARY"
-            echo "https://github.com/$REPO/pull/$EXISTING" >> "$GITHUB_STEP_SUMMARY"
+          # Guard passed: pull the update into main (updates land automatically,
+          # the build's smoke gate stays as the last line of defense for the IPA).
+          if git push origin upstream-sync:main; then
+            echo "### Update pulled into main" >> "$GITHUB_STEP_SUMMARY"
+            echo "Merge commit: KaringX/clashmi@$UP_SHORT" >> "$GITHUB_STEP_SUMMARY"
           else
-            {
-              echo "Automated daily upstream sync."
-              echo ""
-              echo "- Upstream: KaringX/clashmi main @ $UP_SHORT"
-              echo "- Patch guard passed (vendored deps / Libclash facade / VpnServiceHandler / private stubs / build workflow all intact)"
-              echo ""
-              echo "Please review that the 5 closed-source gap patches still make sense before merging."
-            } > /tmp/sync_pr_body.md
-            if gh pr create --base main --head upstream-sync \
-              --title "chore: sync upstream KaringX/clashmi@$UP_SHORT" \
-              --body-file /tmp/sync_pr_body.md; then
-              echo "PR created." >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "Could not create PR via API - enable 'Allow GitHub Actions to create and approve pull requests' in repo Settings > Actions > General." >> "$GITHUB_STEP_SUMMARY"
-              echo "Open manually: https://github.com/$REPO/compare/main...upstream-sync" >> "$GITHUB_STEP_SUMMARY"
-            fi
+            echo "::error::failed to push merged result to main (branch moved or protected?)"
+            exit 1
+          fi
+
+          # GITHUB_TOKEN pushes never chain-trigger workflows — dispatch the build explicitly.
+          if gh workflow run build-trollstore-ipa.yml --ref main; then
+            echo "### Packaging dispatched" >> "$GITHUB_STEP_SUMMARY"
+            echo "Build + smoke gate + fake-sign IPA running now." >> "$GITHUB_STEP_SUMMARY"
+            echo "https://github.com/$REPO/actions/workflows/build-trollstore-ipa.yml" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::failed to dispatch build workflow"
+            echo "Dispatch manually: https://github.com/$REPO/actions/workflows/build-trollstore-ipa.yml" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
