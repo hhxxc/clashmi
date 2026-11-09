@@ -77,3 +77,5 @@ ios/clashmiWidget/VpnServiceHandler.swift
 
 /ios/Build
 /macos/Build
+.core-build/
+bind/apple/Libclash.xcframework/

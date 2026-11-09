@@ -16,6 +16,12 @@ cd "$(dirname "$0")"
 
 command -v ldid >/dev/null || { echo "缺少 ldid，请先: brew install ldid"; exit 1; }
 
+if [ ! -d "bind/apple/Libclash.xcframework" ]; then
+  echo "缺少 bind/apple/Libclash.xcframework（VPN 核心 SDK）"
+  echo "请先运行: bash scripts/build_libclash_core.sh"
+  exit 1
+fi
+
 echo "==> flutter pub get"
 flutter pub get
 
