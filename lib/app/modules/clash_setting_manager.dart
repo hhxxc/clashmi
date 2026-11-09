@@ -66,6 +66,46 @@ class ClashSettingManager {
     } catch (err) {
       Log.w("ClashSettingManager.initGeo exception ${err.toString()} ");
     }
+    await _initCoreGeodata(homePath);
+  }
+
+  // The Libclash tunnel extension (iOS/macOS) refuses to start unless
+  // GEOIP/GEOSITE/ASN geodata is pre-staged in {profileDir}/working
+  // ("NE downloads are disabled"). Stage them from the bundled assets.
+  // On-disk names must match constant/path.go in the core:
+  //   geoip.metadb (MMDB scan also accepts Country.mmdb/geoip.db),
+  //   GeoSite.dat, ASN.mmdb (case-insensitive).
+  static Future<void> _initCoreGeodata(String homePath) async {
+    if (!Platform.isIOS && !Platform.isMacOS) {
+      return;
+    }
+    final workingPath = path.join(homePath, "working");
+    try {
+      await Directory(workingPath).create(recursive: true);
+    } catch (_) {}
+    const coreGeoFiles = {
+      "geoip.metadb": "geoip.metadb",
+      "geosite.dat": "GeoSite.dat",
+      "ASN.mmdb": "ASN.mmdb",
+    };
+    for (final entry in coreGeoFiles.entries) {
+      try {
+        final filePath = File(path.join(workingPath, entry.value));
+        if (await filePath.exists()) {
+          final stat = await filePath.stat();
+          if (DateTime.now().difference(stat.modified).inDays < 7) {
+            continue;
+          }
+        }
+        final data = await rootBundle.load('assets/datas/${entry.key}');
+        final bytes = data.buffer.asUint8List();
+        await filePath.writeAsBytes(bytes, flush: true);
+      } catch (err) {
+        Log.w(
+          "ClashSettingManager._initCoreGeodata(${entry.key}) exception ${err.toString()}",
+        );
+      }
+    }
   }
 
   static Future<String> getSecretFromDid() async {

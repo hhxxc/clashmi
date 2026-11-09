@@ -148,7 +148,14 @@ flutter:
     - path: assets/datas/geoip_codes.txt
       platforms: [windows, linux, macos, android, ios]
     - path: assets/datas/ASN.mmdb
-      platforms: [windows, linux, macos, android]
+      platforms: [windows, linux, macos, android, ios]
+    # Core geodata pre-staged for the Libclash tunnel extension:
+    # it refuses to start unless {profileDir}/working/geoip.metadb etc. exist
+    # (NE downloads are disabled). Only iOS/macOS run the extension.
+    - path: assets/datas/geoip.metadb
+      platforms: [macos, ios]
+    - path: assets/datas/geosite.dat
+      platforms: [macos, ios]
 
   fonts:
     - family: Emoji # from hiddify

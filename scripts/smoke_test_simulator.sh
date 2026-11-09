@@ -198,6 +198,26 @@ sleep 25
 log "==> Screenshot"
 xcrun simctl io "$UDID" screenshot "$OUT/smoke_screenshot.png" 2>&1 | tee -a "$BUILD_LOG" || true
 
+# 核心 geodata 必须已由 app 预置到 working/（内核 NE 不允许运行时下载，
+# 缺文件时 LibclashStart 会报 "not pre-staged"）。这是真机「启动内核失败」的回归闸门。
+GEO_FAIL=""
+if [ -n "$SEED_DIR" ] && [ -d "$SEED_DIR" ]; then
+  log "==> Verifying core geodata staged in working/"
+  for f in geoip.metadb GeoSite.dat ASN.mmdb; do
+    p="$SEED_DIR/working/$f"
+    sz=$(wc -c < "$p" 2>/dev/null || echo 0)
+    log "  $f: $sz bytes"
+    if [ "$sz" -lt 100000 ]; then
+      GEO_FAIL="${GEO_FAIL:+$GEO_FAIL, }$f missing/empty"
+    fi
+  done
+  if [ -n "$GEO_FAIL" ]; then
+    log "FAIL: geodata not staged: $GEO_FAIL"
+  fi
+else
+  log "WARN: seed dir unavailable — skipping geodata staging check"
+fi
+
 log "==> Collecting unified log"
 xcrun simctl spawn "$UDID" log show --last 2m --style compact 2>/dev/null \
   | grep -iE "runner|clash|flutter|fatal|error|exception|invalidProfile|访问配置|native_helper" \
@@ -227,6 +247,9 @@ if [ -n "$APP_CRASH_LINES" ]; then
   FAIL_MARKERS="app crash/error markers in launch log"
   log "matched crash lines:"
   echo "$APP_CRASH_LINES" | head -10 | tee -a "$BUILD_LOG"
+fi
+if [ -n "$GEO_FAIL" ]; then
+  FAIL_MARKERS="${FAIL_MARKERS:+$FAIL_MARKERS; }geodata not staged: $GEO_FAIL"
 fi
 
 SHOT_SIZE=$(wc -c < "$OUT/smoke_screenshot.png" 2>/dev/null || echo 0)
