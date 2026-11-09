@@ -64,28 +64,6 @@ run xcodebuild -showBuildSettings \
   -workspace ios/Runner.xcworkspace -scheme Runner \
   -configuration Debug -sdk iphonesimulator || true
 
-log "==> Building app for iOS Simulator via xcodebuild (debug)"
-rm -rf "$SIM_BUILD_DIR"
-run xcodebuild build \
-  -workspace ios/Runner.xcworkspace -scheme Runner \
-  -configuration Debug -sdk iphonesimulator \
-  -destination 'generic/platform=iOS Simulator' \
-  CONFIGURATION_BUILD_DIR="$SIM_BUILD_DIR" \
-  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-  || log "WARN: xcodebuild build exited non-zero"
-
-APP="$(ls -d "$SIM_BUILD_DIR"/*.app 2>/dev/null | head -1)"
-if [ -z "$APP" ]; then
-  log "==> Primary build produced no .app — falling back to flutter build --verbose"
-  run flutter build ios --simulator --debug --verbose || true
-  APP="$(ls -d "$ROOT"/build/ios/iphonesimulator/*.app 2>/dev/null | head -1)"
-fi
-if [ -z "$APP" ]; then
-  log "FAIL: no .app produced in build/ios/iphonesimulator (see smoke_build.log for the real xcodebuild error)"
-  exit 1
-fi
-log "app bundle: $APP"
-
 log "==> Picking an available iPhone simulator"
 UDID="$(xcrun simctl list devices available --json | python3 -c '
 import json, sys
@@ -124,6 +102,44 @@ if [ -z "$UDID" ]; then
   exit 1
 fi
 log "simulator: $UDID"
+
+log "==> Building app for iOS Simulator via xcodebuild (debug)"
+rm -rf "$SIM_BUILD_DIR"
+# SUPPORTED_PLATFORMS 命令行覆盖：项目级配置曾把平台锁死为 iphoneos（已修 pbxproj，
+# 这里再兜一层）。destination 用具体设备 id，绕开 generic 匹配的坑。
+run xcodebuild build \
+  -workspace ios/Runner.xcworkspace -scheme Runner \
+  -configuration Debug -sdk iphonesimulator \
+  -destination "id=$UDID" \
+  CONFIGURATION_BUILD_DIR="$SIM_BUILD_DIR" \
+  SUPPORTED_PLATFORMS="iphoneos iphonesimulator" \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+  || log "WARN: xcodebuild build exited non-zero"
+
+APP="$(ls -d "$SIM_BUILD_DIR"/*.app 2>/dev/null | head -1)"
+if [ -z "$APP" ]; then
+  log "==> Primary build produced no .app — retrying with generic destination"
+  run xcodebuild build \
+    -workspace ios/Runner.xcworkspace -scheme Runner \
+    -configuration Debug -sdk iphonesimulator \
+    -destination 'generic/platform=iOS Simulator' \
+    CONFIGURATION_BUILD_DIR="$SIM_BUILD_DIR" \
+    SUPPORTED_PLATFORMS="iphoneos iphonesimulator" \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+    || log "WARN: generic retry exited non-zero"
+  APP="$(ls -d "$SIM_BUILD_DIR"/*.app 2>/dev/null | head -1)"
+fi
+if [ -z "$APP" ]; then
+  log "==> Still no .app — falling back to flutter build --verbose"
+  run flutter build ios --simulator --debug --verbose || true
+  APP="$(ls -d "$ROOT"/build/ios/iphonesimulator/*.app 2>/dev/null | head -1)"
+fi
+if [ -z "$APP" ]; then
+  log "FAIL: no .app produced in build/ios/iphonesimulator (see smoke_build.log for the real xcodebuild error)"
+  exit 1
+fi
+log "app bundle: $APP"
+
 xcrun simctl boot "$UDID" 2>>"$BUILD_LOG" || true
 run xcrun simctl bootstatus "$UDID" -b || true
 
