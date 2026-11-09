@@ -292,7 +292,7 @@ class FlutterVpnService {
   static Future<void> hideDockIcon(bool hide) async {
     if (Platform.isMacOS) {
       try {
-        const platform = MethodChannel('com.wmimo.app/native_helper');
+        const platform = MethodChannel('com.nebula.clashmi/native_helper');
         await platform.invokeMethod('hideDockIcon', {'hide': hide});
       } catch (_) {}
     }
@@ -300,7 +300,7 @@ class FlutterVpnService {
   static Future<Directory?> getAppGroupDirectory(String identifier) async {
     if (Platform.isIOS || Platform.isMacOS) {
       try {
-        const platform = MethodChannel('com.wmimo.app/native_helper');
+        const platform = MethodChannel('com.nebula.clashmi/native_helper');
         final String? path = await platform.invokeMethod<String>('getAppGroupDirectory', {'groupId': identifier});
         if (path != null && path.isNotEmpty) {
           final dir = Directory(path);
@@ -354,7 +354,7 @@ class FlutterVpnService {
     // Android: nativeLibraryDir is the ONLY location allowed for ELF execution on Android 10+
     if (Platform.isAndroid) {
       try {
-        const platform = MethodChannel('com.wmimo.app/native_helper');
+        const platform = MethodChannel('com.nebula.clashmi/native_helper');
         final String? nativeLibPath = await platform.invokeMethod<String>('getNativeLibraryPath', {'libName': 'libwmimoService.so'});
         if (nativeLibPath != null && nativeLibPath.isNotEmpty && File(nativeLibPath).existsSync()) {
           return nativeLibPath;
@@ -362,7 +362,7 @@ class FlutterVpnService {
       } catch (_) {}
 
       try {
-        const platform = MethodChannel('com.wmimo.app/native_helper');
+        const platform = MethodChannel('com.nebula.clashmi/native_helper');
         final String? nativeDir = await platform.invokeMethod<String>('getNativeLibraryDir');
         if (nativeDir != null && nativeDir.isNotEmpty) {
           final androidLibCandidates = [
@@ -1197,7 +1197,7 @@ rules:
     activeProfileName = "";
     if (Platform.isAndroid || Platform.isIOS) {
       try {
-        const platform = MethodChannel('com.wmimo.app/native_helper');
+        const platform = MethodChannel('com.nebula.clashmi/native_helper');
         await platform.invokeMethod('stopVpnService');
       } catch (_) {}
     }
@@ -1255,23 +1255,15 @@ rules:
 
       if (Platform.isIOS) {
         try {
-          final mixedPort = _savedConfig?.mixed_port ?? 7890;
           final controlPort = _savedConfig?.control_port ?? 9090;
           final secret = _savedConfig?.secret ?? "";
 
-          // Sync config file to App Group shared container if accessible
-          try {
-            final groupDir = await getAppGroupDirectory("group.com.wmimo.app");
-            if (groupDir != null) {
-              final targetConfig = File("${groupDir.path}/config.json");
-              await File(configFile).copy(targetConfig.path);
-            }
-          } catch (_) {}
-
-          const platform = MethodChannel('com.wmimo.app/native_helper');
+          // clashmi's PacketTunnelProvider (ExtensionProvider) reads
+          // providerConfiguration["configFilePath"] -> VpnServiceConfig JSON
+          // (service.json inside the App Group container, written by prepareConfig).
+          const platform = MethodChannel('com.nebula.clashmi/native_helper');
           final dynamic success = await platform.invokeMethod('startVpnService', {
-            'mixedPort': mixedPort,
-            'configPath': configFile,
+            'configFilePath': _savedConfigFilePath ?? "",
           });
 
           if (success == true) {
@@ -1418,7 +1410,7 @@ rules:
       if (Platform.isAndroid) {
         try {
           final mixedPort = _savedConfig?.mixed_port ?? 7890;
-          const platform = MethodChannel('com.wmimo.app/native_helper');
+          const platform = MethodChannel('com.nebula.clashmi/native_helper');
           await platform.invokeMethod('startVpnService', {
             'mixedPort': mixedPort,
             'notificationContent': _savedConfig?.notification_content,

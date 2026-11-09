@@ -42,7 +42,9 @@ public final class VpnServiceHandler {
             proto.providerBundleIdentifier = self.bundleIdentifier
             proto.serverAddress = self.uiServerAddress
             proto.providerConfiguration = [
-                "sharedConfigPath": self.configFilePath
+                // ExtensionProvider reads providerConfiguration["configFilePath"]
+                // as the VpnServiceConfig JSON (service.json in the App Group).
+                "configFilePath": self.configFilePath
             ]
             manager.protocolConfiguration = proto
             manager.localizedDescription = self.uiLocalizedDescription
