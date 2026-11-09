@@ -175,6 +175,17 @@ run xcrun simctl bootstatus "$UDID" -b || true
 log "==> Installing app"
 run xcrun simctl install "$UDID" "$APP" || exit 1
 
+# 预写同意标记（LocalStorage 的 storage.json 在 App Group 容器），跳过欢迎页直达主界面，
+# 这样能验证「访问配置文件」路径（profileDir -> getAppGroupDirectory -> native_helper）。
+log "==> Pre-seeding storage.json in App Group container (skip onboarding)"
+GROUP_DIR="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" groups 2>/dev/null | head -1)"
+if [ -n "$GROUP_DIR" ] && [ -d "$GROUP_DIR" ]; then
+  printf '{"userAgreementAgreedKey": "true"}\n' > "$GROUP_DIR/storage.json"
+  log "app group container: $GROUP_DIR (storage.json seeded)"
+else
+  log "WARN: could not resolve app group container — onboarding screen will show (non-fatal)"
+fi
+
 log "==> Launching app (detached)"
 xcrun simctl launch "$UDID" "$BUNDLE_ID" 2>&1 | tee -a "$BUILD_LOG" || true
 log "waiting 25s for Flutter boot + home screen render..."
@@ -186,6 +197,7 @@ xcrun simctl io "$UDID" screenshot "$OUT/smoke_screenshot.png" 2>&1 | tee -a "$B
 log "==> Collecting unified log"
 xcrun simctl spawn "$UDID" log show --last 2m --style compact 2>/dev/null \
   | grep -iE "runner|clash|flutter|fatal|error|exception|invalidProfile|访问配置" \
+  | grep -viE "sharingd|replicatord|rapportd|apsd|SpringBoard|runningboardd|cloudd|passd|sleepd|chronod|assistantd|businessservicesd|UserNotifications|IDS:Registration|gamecenter|memorystatus" \
   | tee "$OUT/smoke_launch.log" | tail -40 | tee -a "$BUILD_LOG" || true
 
 log "==> Checking process is alive"
@@ -196,12 +208,16 @@ elif xcrun simctl spawn "$UDID" ps -ax 2>/dev/null | grep -qiE "Clash Mi|clashmi
   RUNNING=1
 fi
 
+# 崩溃标记只对 app 自己的日志行判定——模拟器系统服务（sharingd/replicatord 等）
+# 满嘴 "fatal error" 噪音，与 app 无关。
+APP_CRASH_LINES="$(grep -iE "runner|clashmi|clash mi|flutter|nebula" "$OUT/smoke_launch.log" 2>/dev/null \
+  | grep -iE "invalidProfile|访问配置文件|Fatal error|Unhandled exception|Cannot find .* in scope|Terminating app|Process crashed|Fatal signal|EXC_BREAKPOINT|EXC_BAD_ACCESS" || true)"
+
 FAIL_MARKERS=""
-if grep -qiE "invalidProfile|访问配置文件|Fatal error|Unhandled exception|Cannot find .* in scope" "$OUT/smoke_launch.log" 2>/dev/null; then
-  FAIL_MARKERS="error markers in launch log"
-fi
-if grep -qiE "Terminating app due to uncaught exception|Process crashed" "$OUT/smoke_launch.log" 2>/dev/null; then
-  FAIL_MARKERS="${FAIL_MARKERS:+$FAIL_MARKERS; }crash markers in launch log"
+if [ -n "$APP_CRASH_LINES" ]; then
+  FAIL_MARKERS="app crash/error markers in launch log"
+  log "matched crash lines:"
+  echo "$APP_CRASH_LINES" | head -10 | tee -a "$BUILD_LOG"
 fi
 
 SHOT_SIZE=$(wc -c < "$OUT/smoke_screenshot.png" 2>/dev/null || echo 0)
