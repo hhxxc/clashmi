@@ -1,3 +1,11 @@
+// ignore_for_file: constant_identifier_names
+
+const List<String> ProxyBypassDoaminsDefault = [
+  'localhost',
+  '127.0.0.1',
+  '::1',
+];
+
 class ProxyOption {
   final String host;
   final int port;

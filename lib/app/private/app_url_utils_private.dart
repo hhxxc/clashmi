@@ -36,3 +36,15 @@ class BoardProviderPrivate {
     required String type,
   }) => const Tuple3("", "", "");
 }
+
+class ProfileProxyProviderPrivate {
+  static Tuple3<String, String, dynamic> getProviderProxyUrlAndBody({
+    required String app,
+    required String version,
+    required String did,
+    required String boardProviderId,
+    required String url,
+    required String userAgent,
+    required Map<String, String> xhwidHeaders,
+  }) => const Tuple3("", "", "");
+}
