@@ -13,7 +13,7 @@ import NetworkExtension
 
 struct clashmiWidgetControl: ControlWidget {
     public static let controlKind: String = "com.nebula.clashmi.clashmiWidget.ControlCenterToggle"
-    private static let bundleIdentifier = "com.nebula.clashmi.clashmiService"
+    private static let bundleIdentifier = "com.nebula.clashmi"
     private static let groupIdentifier = "group.com.nebula.clashmi"
     // containerURL returns nil when the app group is unavailable (e.g. unsigned
     // builds in the simulator) — never force-unwrap here or the whole extension

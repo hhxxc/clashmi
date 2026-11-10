@@ -45,8 +45,17 @@ trap 'rm -rf "$WORKDIR"' EXIT
 # keychain-access-groups 里的 $(AppIdentifierPrefix) 是构建期变量，
 # ldid 不会替换，去掉前缀即可（自用场景无影响）。
 sed 's/\$(AppIdentifierPrefix)//g' ios/Runner/Runner.entitlements > "$WORKDIR/runner.plist"
-cp ios/clashmiService/clashmiService.entitlements "$WORKDIR/service.plist"
 cp ios/clashmiWidgetExtension.entitlements "$WORKDIR/widget.plist"
+
+# ── 参考版 TF1604 方案：去掉 NE 扩展 .appex ──
+# NE 扩展在 ldid 假签下被 iOS 拒绝（"需要更新"），
+# 改用主进程内 LibVpnCore.framework 的 ExtensionProvider（NE 子类），
+# providerBundleIdentifier 指向主 app bundle ID。
+# 删除 clashmiService.appex，保留 widget 扩展。
+if [ -d "$APP/PlugIns/clashmiService.appex" ]; then
+  echo "==> 移除 clashmiService.appex（NE 扩展改走主进程内 LibVpnCore）"
+  rm -rf "$APP/PlugIns/clashmiService.appex"
+fi
 
 sign() {
   local ent="$1" dir="$2"
@@ -58,9 +67,9 @@ sign() {
 
 sign "$WORKDIR/runner.plist" "$APP"
 for appex in "$APP"/PlugIns/*.appex; do
+  [ -d "$appex" ] || continue
   case "$appex" in
-    *clashmiService*) sign "$WORKDIR/service.plist" "$appex" ;;
-    *)                sign "$WORKDIR/widget.plist"  "$appex" ;;
+    *) sign "$WORKDIR/widget.plist" "$appex" ;;
   esac
 done
 

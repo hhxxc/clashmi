@@ -44,7 +44,9 @@ abstract final class AppUtils {
       if (Platform.isMacOS && systemExtension) {
         return "com.nebula.clashmi.clashmiServiceSE";
       }
-      return "com.nebula.clashmi.clashmiService";
+      // TrollStore: NE 扩展走主进程内 LibVpnCore.framework 的 ExtensionProvider，
+      // providerBundleIdentifier 指向主 app（与参考版 TF1604 一致）
+      return "com.nebula.clashmi";
     }
     return "";
   }

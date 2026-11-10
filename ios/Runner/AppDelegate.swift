@@ -6,7 +6,7 @@ import NetworkExtension
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let CHANNEL = "com.nebula.clashmi/native_helper"
   private let appGroupId = "group.com.nebula.clashmi"
-  private let tunnelBundleId = "com.nebula.clashmi.clashmiService"
+  private let tunnelBundleId = "com.nebula.clashmi"
   private var vpnManager: NETunnelProviderManager?
 
   override func application(

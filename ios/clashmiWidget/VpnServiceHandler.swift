@@ -6,7 +6,7 @@ public final class VpnServiceHandler {
     public static let shared = VpnServiceHandler()
     
     public var controlKind: String = ""
-    public var bundleIdentifier: String = "com.nebula.clashmi.clashmiService"
+    public var bundleIdentifier: String = "com.nebula.clashmi"
     public var configFilePath: String = ""
     public var uiServerAddress: String = "Clash Mi"
     public var uiLocalizedDescription: String = "Clash Mi"
