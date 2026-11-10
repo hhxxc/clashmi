@@ -64,6 +64,18 @@ for appex in "$APP"/PlugIns/*.appex; do
   esac
 done
 
+# 对每个嵌入的 framework 的可执行文件也做 ldid 假签，
+# 防止 iOS 在加载 framework 时因签名缺失而拒绝（参考 TF1604 版均有 _CodeSignature）
+for fw in "$APP"/Frameworks/*.framework; do
+  [ -d "$fw" ] || continue
+  fwname=$(basename "$fw" .framework)
+  fwbin="$fw/$fwname"
+  if [ -f "$fwbin" ] && [ -x "$fwbin" ]; then
+    echo "==> ldid 假签 framework: $fwname"
+    ldid -S "$fwbin" 2>/dev/null || ldid -S"$WORKDIR/runner.plist" "$fwbin" 2>/dev/null || true
+  fi
+done
+
 echo "==> 打包 IPA"
 rm -rf Payload
 mkdir Payload
