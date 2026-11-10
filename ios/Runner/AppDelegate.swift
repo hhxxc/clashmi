@@ -1,13 +1,18 @@
 import Flutter
 import UIKit
-import NetworkExtension
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let CHANNEL = "com.nebula.clashmi/native_helper"
   private let appGroupId = "group.com.nebula.clashmi"
-  private let tunnelBundleId = "com.nebula.clashmi"
-  private var vpnManager: NETunnelProviderManager?
+
+  // TrollStore FakeVPN: the core runs as an independent root process
+  // (TSRootBinaries + com.apple.private.persona-mgmt spawnRoot), creating a
+  // user-space utun tunnel and system routes. No NetworkExtension involved —
+  // ldid fake-signed NE providers are rejected by nesessionmanager.
+  private let pidFileName = "roothelper.pid"
+  private let ifaceFileName = "roothelper.iface"
+  private var cachedContainerPath: String?
 
   override func application(
     _ application: UIApplication,
@@ -27,6 +32,82 @@ import NetworkExtension
     }
   }
 
+  // MARK: - Paths
+
+  private func containerPath() -> String {
+    if let cached = cachedContainerPath {
+      return cached
+    }
+    var path: String
+    if let containerUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) {
+      path = containerUrl.path
+    } else {
+      // Fallback for environments without App Group resolution (iOS Simulator
+      // ad-hoc signing). Real devices (ldid fake-sign with app-groups) resolve.
+      let appSupport = FileManager.default.urls(
+        for: .applicationSupportDirectory, in: .userDomainMask
+      ).first!
+      let fallback = appSupport.appendingPathComponent(appGroupId)
+      try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true)
+      path = fallback.path
+    }
+    cachedContainerPath = path
+    return path
+  }
+
+  private var pidFilePath: String {
+    (containerPath() as NSString).appendingPathComponent(pidFileName)
+  }
+
+  private var ifaceFilePath: String {
+    (containerPath() as NSString).appendingPathComponent(ifaceFileName)
+  }
+
+  private func rootHelperPath() -> String? {
+    Bundle.main.path(forResource: "roothelper", ofType: nil)
+  }
+
+  /// Reads the VpnServiceConfig JSON written by Dart and returns the
+  /// roothelper argv tail (config paths + dirs). Pid/iface files are appended
+  /// by the caller.
+  private func rootHelperArgs(configFilePath: String) -> [String]? {
+    guard
+      let data = FileManager.default.contents(atPath: configFilePath),
+      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+      NSLog("[native_helper] cannot parse service config: \(configFilePath)")
+      return nil
+    }
+    func str(_ key: String) -> String { obj[key] as? String ?? "" }
+    return [
+      str("core_path"),
+      str("core_path_patch"),
+      str("core_path_patch_final"),
+      str("base_dir"),
+      str("log_path"),
+      str("err_path"),
+    ]
+  }
+
+  /// Returns the pid recorded in the pidfile, or 0 if absent/invalid.
+  private func recordedPid() -> Int32 {
+    guard
+      let text = try? String(contentsOfFile: pidFilePath, encoding: .utf8),
+      let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+      pid > 0
+    else {
+      return 0
+    }
+    return pid
+  }
+
+  private func isHelperRunning() -> Bool {
+    let pid = recordedPid()
+    return pid > 0 && kill(pid, 0) == 0
+  }
+
+  // MARK: - Native helper channel
+
   private func setupNativeHelperChannel(messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: CHANNEL, binaryMessenger: messenger)
     channel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
@@ -37,78 +118,46 @@ import NetworkExtension
 
       switch call.method {
       case "checkVpnPermission":
-        self.loadVpnManager { manager in
-          result(manager != nil && manager?.isEnabled == true)
-        }
+        // No system VPN permission needed for the root FakeVPN.
+        result(true)
 
       case "requestVpnPermission":
-        self.loadOrCreateVpnManager { manager, error in
-          if let error = error {
-            result(FlutterError(code: "VPN_PERMISSION_ERROR", message: error.localizedDescription, details: nil))
-            return
-          }
-          result(manager != nil)
-        }
+        result(true)
 
       case "startVpnService":
-        let args = call.arguments as? [String: Any]
-        // ExtensionProvider reads providerConfiguration["configFilePath"] and
-        // decodes it as VpnServiceConfig (service.json in the App Group container).
-        let configFilePath = args?["configFilePath"] as? String ?? ""
-
-        self.loadOrCreateVpnManager { manager, error in
-          guard let manager = manager else {
-            result(FlutterError(code: "VPN_MANAGER_UNAVAILABLE", message: error?.localizedDescription ?? "VPN manager unavailable", details: nil))
-            return
-          }
-
-          manager.isEnabled = true
-          let proto = (manager.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
-          proto.providerBundleIdentifier = self.tunnelBundleId
-          proto.serverAddress = "Clash Mi"
-          proto.providerConfiguration = ["configFilePath": configFilePath]
-          manager.protocolConfiguration = proto
-          manager.localizedDescription = "Clash Mi"
-
-          manager.saveToPreferences { saveErr in
-            if let saveErr = saveErr {
-              result(FlutterError(code: "SAVE_FAILED", message: saveErr.localizedDescription, details: nil))
-              return
-            }
-            manager.loadFromPreferences { loadErr in
-              if let loadErr = loadErr {
-                result(FlutterError(code: "LOAD_FAILED", message: loadErr.localizedDescription, details: nil))
-                return
-              }
-              do {
-                try manager.connection.startVPNTunnel()
-                result(true)
-              } catch {
-                result(FlutterError(code: "START_FAILED", message: error.localizedDescription, details: nil))
-              }
-            }
-          }
+        guard let helperPath = self.rootHelperPath() else {
+          result(FlutterError(code: "NO_HELPER", message: "roothelper binary missing from bundle", details: nil))
+          return
         }
+        let args = call.arguments as? [String: Any]
+        let configFilePath = args?["configFilePath"] as? String ?? ""
+        guard configFilePath.isEmpty == false else {
+          result(FlutterError(code: "NO_CONFIG", message: "configFilePath empty", details: nil))
+          return
+        }
+        guard var helperArgs = self.rootHelperArgs(configFilePath: configFilePath) else {
+          result(FlutterError(code: "BAD_CONFIG", message: "service config unreadable", details: nil))
+          return
+        }
+        // Idempotent restart: kill any previous instance first.
+        self.stopHelperSync()
+
+        helperArgs.append(self.pidFilePath)
+        helperArgs.append(self.ifaceFilePath)
+
+        // Wait until roothelper writes its pidfile (it does so before
+        // LibclashStart; Dart probes the external-controller for real readiness).
+        let spawned = TSSpawnRootAndWaitForPidFile(
+          helperPath, helperArgs, self.pidFilePath, 15.0
+        )
+        result(spawned)
 
       case "stopVpnService":
-        self.loadVpnManager { manager in
-          manager?.connection.stopVPNTunnel()
-          result(true)
-        }
+        self.stopHelperSync()
+        result(true)
 
       case "getVpnStatus":
-        self.loadVpnManager { manager in
-          guard let status = manager?.connection.status else {
-            result("disconnected")
-            return
-          }
-          switch status {
-          case .connected: result("connected")
-          case .connecting: result("connecting")
-          case .disconnecting: result("disconnecting")
-          default: result("disconnected")
-          }
-        }
+        result(self.isHelperRunning() ? "connected" : "disconnected")
 
       case "getAppGroupDirectory":
         let args = call.arguments as? [String: Any]
@@ -116,17 +165,9 @@ import NetworkExtension
         if let containerUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupId) {
           result(containerUrl.path)
         } else {
-          // Fallback for environments without App Group resolution (e.g. iOS
-          // Simulator ad-hoc signing). The real device (ldid fake-sign with
-          // the app-groups entitlement) always resolves the container.
-          let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-          ).first!
-          let fallback = appSupport.appendingPathComponent(groupId)
-          try? FileManager.default.createDirectory(
-            at: fallback, withIntermediateDirectories: true)
-          NSLog("[native_helper] App Group unavailable, falling back to \(fallback.path)")
-          result(fallback.path)
+          let fallback = self.containerPath()
+          NSLog("[native_helper] App Group unavailable, falling back to \(fallback)")
+          result(fallback)
         }
 
       case "hideDockIcon", "getNativeLibraryPath", "getNativeLibraryDir":
@@ -139,31 +180,28 @@ import NetworkExtension
     }
   }
 
-  private func loadVpnManager(completion: @escaping (NETunnelProviderManager?) -> Void) {
-    if let existing = self.vpnManager {
-      completion(existing)
+  /// Spawns `roothelper stop <pidFile>` to ask the running instance to exit,
+  /// and removes stale state files.
+  private func stopHelperSync() {
+    guard isHelperRunning(), let helperPath = rootHelperPath() else {
+      cleanupHelperState()
       return
     }
-    NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, _ in
-      let manager = managers?.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == self?.tunnelBundleId }
-      self?.vpnManager = manager
-      completion(manager)
+    _ = TSSpawnRoot(helperPath, ["stop", pidFilePath])
+    // Give the helper a moment to clean up routes and exit.
+    let pid = recordedPid()
+    let deadline = Date().addingTimeInterval(3)
+    while Date() < deadline {
+      if pid == 0 || kill(pid, 0) != 0 {
+        break
+      }
+      Thread.sleep(forTimeInterval: 0.1)
     }
+    cleanupHelperState()
   }
 
-  private func loadOrCreateVpnManager(completion: @escaping (NETunnelProviderManager?, Error?) -> Void) {
-    NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, error in
-      if let error = error {
-        completion(nil, error)
-        return
-      }
-      guard let self = self else {
-        completion(nil, nil)
-        return
-      }
-      let manager = managers?.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == self.tunnelBundleId } ?? NETunnelProviderManager()
-      self.vpnManager = manager
-      completion(manager, nil)
-    }
+  private func cleanupHelperState() {
+    try? FileManager.default.removeItem(atPath: pidFilePath)
+    try? FileManager.default.removeItem(atPath: ifaceFilePath)
   }
 }

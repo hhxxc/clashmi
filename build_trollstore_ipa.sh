@@ -65,6 +65,18 @@ sign() {
   ldid -S"$ent" "$dir/$bin"
 }
 
+# ── roothelper: TrollStore root FakeVPN 核心 ──
+# 独立 root 进程（TSRootBinaries + persona-mgmt spawnRoot），用户态 utun
+# 隧道 + 系统路由，彻底绕开被 iOS 拒绝的 NetworkExtension 假签。
+if [ -f "bind/apple/roothelper" ]; then
+  echo "==> 拷贝 roothelper 到 app bundle"
+  cp "bind/apple/roothelper" "$APP/roothelper"
+  chmod +x "$APP/roothelper"
+  ldid -S"$WORKDIR/runner.plist" "$APP/roothelper" 2>/dev/null || true
+else
+  echo "警告: 缺少 bind/apple/roothelper（VPN 将无法连接）"
+fi
+
 sign "$WORKDIR/runner.plist" "$APP"
 for appex in "$APP"/PlugIns/*.appex; do
   [ -d "$appex" ] || continue

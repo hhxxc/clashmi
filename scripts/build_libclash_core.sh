@@ -24,6 +24,10 @@ echo "==> Injecting libclash facade"
 mkdir -p "$WORK/kernel/bind/clash/libclash"
 cp "$ROOT/bind/libclash/"*.go "$WORK/kernel/bind/clash/libclash/"
 
+echo "==> Injecting roothelper (TrollStore root FakeVPN core)"
+mkdir -p "$WORK/kernel/bind/clash/cmd/roothelper"
+cp "$ROOT/bind/roothelper/main.go" "$WORK/kernel/bind/clash/cmd/roothelper/"
+
 echo "==> Installing gomobile"
 export GOBIN="$WORK/bin"
 export PATH="$GOBIN:$PATH"
@@ -40,6 +44,20 @@ rm -rf "$ROOT/bind/apple/Libclash.xcframework"
     -o "$ROOT/bind/apple/Libclash.xcframework" \
     ./libclash
 )
+
+echo "==> build roothelper binary (ios/arm64)"
+# Runs as root via TrollStore spawnRoot; user-space utun FakeVPN replacing the
+# NetworkExtension path (ldid fake-signed NE providers are rejected by iOS).
+# iOS requires external (cgo) linking, so CGO stays enabled on the macOS runner.
+(
+  cd "$WORK/kernel/bind/clash"
+  CGO_ENABLED=1 GOOS=ios GOARCH=arm64 go build \
+    -tags="with_gvisor,cmfa,with_quic,with_low_memory,no_easytier" \
+    -trimpath \
+    -o "$ROOT/bind/apple/roothelper" \
+    ./cmd/roothelper
+)
+chmod +x "$ROOT/bind/apple/roothelper"
 
 echo "==> Done: $ROOT/bind/apple/Libclash.xcframework"
 ls -la "$ROOT/bind/apple/Libclash.xcframework"
