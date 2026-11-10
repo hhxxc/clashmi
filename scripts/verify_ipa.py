@@ -3,7 +3,7 @@
 
 对构建产物做无需 iOS 运行时的静态校验：
   - zip 完整性 / Payload 目录布局
-  - 主 app + 全部 .appex（VPN 隧道扩展、小组件）齐全
+  - 主 app + widget .appex 齐全；NE 服务扩展已移除（TF1604 架构，VPN 走主进程内 LibVpnCore）
   - 各 target 的 Info.plist（含二进制 plist）关键字段
   - Mach-O 魔数 + arm64 切片（TrollStore 装机前提）
   - 可执行文件非空、MinimumOSVersion 下限
@@ -116,11 +116,16 @@ def main():
         }
     )
     ok(f"appex targets: {appexes or 'NONE'}")
-    for want in ("clashmiService.appex", "clashmiWidgetExtension.appex"):
-        if want in appexes:
-            ok(f"{want} present")
-        else:
-            fail(f"{want} MISSING")
+    # TF1604 架构（commit b8424e4）：NE 隧道跑在主进程内 LibVpnCore.framework
+    # 的 ExtensionProvider，无独立 .appex；包内只应有 widget 扩展。
+    if "clashmiService.appex" in appexes:
+        fail("clashmiService.appex PRESENT — NE 扩展已被移除（TF1604 方案），包内不应再出现")
+    else:
+        ok("clashmiService.appex absent (NE 走主进程内 LibVpnCore，TF1604 架构)")
+    if "clashmiWidgetExtension.appex" in appexes:
+        ok("clashmiWidgetExtension.appex present")
+    else:
+        fail("clashmiWidgetExtension.appex MISSING")
 
     # ---- Info.plist of main app + each appex ----
     targets = [(app, "main")]
