@@ -963,6 +963,7 @@ class _HomeScreenWidgetPart1 extends State<HomeScreenWidgetPart1> {
     if (AppLifecycleStateNofity.isPaused()) {
       return;
     }
+    FlutterVpnService.resumeTrafficMonitor();
     await _updateConnections();
     const Duration duration = Duration(seconds: 1);
     _timerConnectToCore ??= Timer.periodic(duration, (timer) async {

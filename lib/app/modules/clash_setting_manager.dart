@@ -672,6 +672,7 @@ class ClashSettingManager {
     }
     _setting = setting;
     _setting.MixedPort ??= 7890;
+    _setting.ExternalController ??= "127.0.0.1:9090";
     _setting.DNS ??= defaultDNS();
     _setting.NTP ??= defaultNTP();
     _setting.Tun ??= defaultTun();
@@ -747,11 +748,15 @@ class ClashSettingManager {
   }
 
   static int getControlPort() {
-    final parts = _setting.ExternalController?.split(':');
-    if (parts?.length == 2) {
-      return int.tryParse(parts![1]) ?? 0;
-    }
-    return 0;
+    final ec = _setting.ExternalController;
+    if (ec == null || ec.isEmpty) return 9090;
+    // Handle IPv6 format [::1]:9090 and plain host:port
+    final lastColon = ec.lastIndexOf(':');
+    if (lastColon <= 0 || lastColon >= ec.length - 1) return 9090;
+    final portStr = ec.substring(lastColon + 1);
+    final port = int.tryParse(portStr);
+    if (port == null || port <= 0 || port > 65535) return 9090;
+    return port;
   }
 
   static int getMixedPort() {

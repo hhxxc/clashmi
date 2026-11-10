@@ -701,7 +701,8 @@ class FlutterVpnService {
       } catch (_) {}
     }
 
-    final port = _savedConfig?.control_port ?? 9090;
+    final rawPort = _savedConfig?.control_port ?? 0;
+    final port = rawPort > 0 && rawPort <= 65535 ? rawPort : 9090;
     final mixedPort = _savedConfig?.mixed_port ?? (patchJson?['mixed-port'] ?? 7890);
     final secret = _savedConfig?.secret ?? "";
     final mode = (_savedConfig?.mode.isNotEmpty == true)
@@ -1183,9 +1184,23 @@ rules:
   static bool _trafficMonitoring = false;
   static StreamSubscription? _trafficSub;
   static HttpClient? _trafficClient;
+  static bool _trafficConnected = false;
 
   static void _startTrafficMonitor(int port, String secret) {
+    final effectivePort = port > 0 && port <= 65535 ? port : 9090;
     _trafficMonitoring = true;
+    _trafficConnected = false;
+    _listenTraffic(effectivePort, secret);
+  }
+
+  /// Restart the traffic monitor if it is not actively listening.
+  /// Call this when the app resumes or when the UI needs fresh traffic data.
+  static void resumeTrafficMonitor() {
+    if (!_trafficMonitoring) return;
+    if (_trafficConnected && _trafficSub != null) return;
+    final rawPort = _savedConfig?.control_port ?? 0;
+    final port = rawPort > 0 && rawPort <= 65535 ? rawPort : 9090;
+    final secret = _savedConfig?.secret ?? "";
     _listenTraffic(port, secret);
   }
 
@@ -1193,6 +1208,7 @@ rules:
     if (!_trafficMonitoring) return;
     _trafficSub?.cancel();
     _trafficClient?.close(force: true);
+    _trafficConnected = false;
     _trafficClient = HttpClient()..connectionTimeout = const Duration(seconds: 3);
     _trafficClient!.getUrl(Uri.parse("http://127.0.0.1:$port/traffic")).then((req) {
       if (secret.isNotEmpty) {
@@ -1200,6 +1216,7 @@ rules:
       }
       return req.close();
     }).then((resp) {
+      _trafficConnected = true;
       _trafficSub = resp
           .transform(utf8.decoder)
           .transform(const LineSplitter())
@@ -1212,15 +1229,18 @@ rules:
           }
         } catch (_) {}
       }, onDone: () {
+        _trafficConnected = false;
         if (_trafficMonitoring) {
           Future.delayed(const Duration(seconds: 1), () => _listenTraffic(port, secret));
         }
       }, onError: (_) {
+        _trafficConnected = false;
         if (_trafficMonitoring) {
           Future.delayed(const Duration(seconds: 1), () => _listenTraffic(port, secret));
         }
       });
     }).catchError((_) {
+      _trafficConnected = false;
       if (_trafficMonitoring) {
         Future.delayed(const Duration(seconds: 1), () => _listenTraffic(port, secret));
       }
@@ -1229,6 +1249,7 @@ rules:
 
   static void _stopTrafficMonitor() {
     _trafficMonitoring = false;
+    _trafficConnected = false;
     _trafficSub?.cancel();
     _trafficSub = null;
     _trafficClient?.close(force: true);
@@ -1327,7 +1348,8 @@ rules:
 
       if (Platform.isIOS) {
         try {
-          final controlPort = _savedConfig?.control_port ?? 9090;
+          final rawPort = _savedConfig?.control_port ?? 0;
+          final controlPort = rawPort > 0 && rawPort <= 65535 ? rawPort : 9090;
           final secret = _savedConfig?.secret ?? "";
 
           // clashmi's PacketTunnelProvider (ExtensionProvider) reads
@@ -1405,7 +1427,8 @@ rules:
         _notifyState(FlutterVpnServiceState.disconnected);
       });
 
-      final port = _savedConfig?.control_port ?? 9090;
+      final rawPort2 = _savedConfig?.control_port ?? 0;
+      final port = rawPort2 > 0 && rawPort2 <= 65535 ? rawPort2 : 9090;
       final secret = _savedConfig?.secret ?? "";
       bool ready = false;
       final stopwatch = Stopwatch()..start();
@@ -1872,10 +1895,11 @@ rules:
   }
 
   static Future<String> clashiApiConnections(bool full) async {
-    final port = _savedConfig?.control_port ?? 9090;
+    final rawPort = _savedConfig?.control_port ?? 0;
+    final port = rawPort > 0 && rawPort <= 65535 ? rawPort : 9090;
     final secret = _savedConfig?.secret ?? "";
     try {
-      final client = HttpClient()..connectionTimeout = const Duration(milliseconds: 600);
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
       final req = await client.getUrl(Uri.parse("http://127.0.0.1:$port/connections"));
       if (secret.isNotEmpty) {
         req.headers.set('Authorization', 'Bearer $secret');
@@ -1884,7 +1908,7 @@ rules:
       final body = await resp.transform(utf8.decoder).join();
       client.close();
       return body;
-    } catch (_) {
+    } catch (e) {
       return "{}";
     }
   }
